@@ -33,10 +33,11 @@ local function workerParams(w)
 end
 
 local function saveWorkers(list)
-    if #list == 0 then return end
     local batch = {}
-    for i, w in ipairs(list) do batch[i] = workerParams(w) end
-    MySQL.prepare(WORKER_UPDATE, batch)
+    for _, w in ipairs(list) do
+        if w.id then batch[#batch + 1] = workerParams(w) end -- skip hires still awaiting their insert id
+    end
+    if #batch > 0 then MySQL.prepare(WORKER_UPDATE, batch) end
 end
 
 local function isHolder(src, id)
@@ -182,8 +183,12 @@ CreateThread(function()
         status VARCHAR(50) NOT NULL DEFAULT 'idle'
     )]])
 
-    -- upgrade older installs
-    MySQL.query.await('ALTER TABLE rsg_mining ADD COLUMN IF NOT EXISTS wages INT NOT NULL DEFAULT 0')
+    -- upgrade older installs (information_schema check works on both MySQL and MariaDB)
+    local hasWages = MySQL.scalar.await([[SELECT COUNT(*) FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'rsg_mining' AND COLUMN_NAME = 'wages']])
+    if (tonumber(hasWages) or 0) == 0 then
+        MySQL.query.await('ALTER TABLE rsg_mining ADD COLUMN wages INT NOT NULL DEFAULT 0')
+    end
 
     for id in pairs(MineCfg) do Mines[id] = newMine() end
 
@@ -196,6 +201,8 @@ CreateThread(function()
             m.supplies  = json.decode(row.supplies or '{}') or {}
             m.storage   = json.decode(row.storage or '{}') or {}
             for k in pairs(Config.Supplies) do m.supplies[k] = m.supplies[k] or 0 end
+            -- already expired before this restart: don't re-announce it
+            m.expiredNotified = m.expires <= os.time()
         end
     end
     for _, w in ipairs(MySQL.query.await('SELECT * FROM rsg_mining_workers') or {}) do
@@ -216,9 +223,11 @@ lib.callback.register('rsg-mining:server:getMineData', function(src, id)
 end)
 
 lib.callback.register('rsg-mining:server:buyLease', function(src, id)
+    if type(id) ~= 'string' then return false end
     local Player = RSGCore.Functions.GetPlayer(src)
     local m, cfg = Mines[id], MineCfg[id]
-    if not Player or not m or onCooldown(src) or not isNear(src, id) then return false end
+    if not Player or not m or not cfg or onCooldown(src) then return false end
+    if not isNear(src, id) then notify(src, locale('too_far'), 'error') return false end
     if m.citizenid and m.expires > os.time() then notify(src, locale('leased_other'), 'error') return false end
     if not Player.Functions.RemoveMoney(Config.MoneyType, cfg.leasePrice, 'mining-lease') then
         notify(src, locale('no_money'), 'error') return false
@@ -232,6 +241,7 @@ lib.callback.register('rsg-mining:server:buyLease', function(src, id)
     end
     m.citizenid = cid
     m.expires   = os.time() + Config.LeaseDurationHours * 3600
+    m.expiredNotified = false
     saveMine(id)
     notify(src, locale('lease_bought', cfg.label), 'success')
     Webhook.Log('lease_bought', { src = src, mine = cfg.label, value = cfg.leasePrice, fields = {
@@ -298,9 +308,9 @@ lib.callback.register('rsg-mining:server:hire', function(src, id, key)
     if ok ~= true then return ok end
     local Player = RSGCore.Functions.GetPlayer(src)
     local m, cfg = Mines[id], MineCfg[id]
+    if type(key) ~= 'string' then return buildData(src, id) end
     if #m.workers >= cfg.maxWorkers then notify(src, locale('max_workers'), 'error') return buildData(src, id) end
     local cand, idx = getCandidates(id), nil
-    if type(key) ~= 'string' then return buildData(src, id) end
     for i, c in ipairs(cand.list) do if c.key == key then idx = i break end end
     if not idx then notify(src, locale('candidate_gone'), 'error') return buildData(src, id) end
     local c = cand.list[idx]
@@ -308,13 +318,14 @@ lib.callback.register('rsg-mining:server:hire', function(src, id, key)
         notify(src, locale('no_money'), 'error') return buildData(src, id)
     end
     table.remove(cand.list, idx)
-    local wid = MySQL.insert.await('INSERT INTO rsg_mining_workers (mine, name, skill, food, water, pickaxe, status) VALUES (?, ?, ?, 100, 100, 0, ?)',
-        { id, c.name, c.skill, 'idle' })
-    local w = { id = wid, mine = id, name = c.name, skill = c.skill, food = 100, water = 100, pickaxe = 0, status = 'idle' }
+    -- add to the crew before the DB await so a second request can't slip past the worker cap
+    local w = { mine = id, name = c.name, skill = c.skill, food = 100, water = 100, pickaxe = 0, status = 'idle' }
     resupply(m, w) -- new hires arrive without a pickaxe; hand one over if stores have it
     w.status = needStatus(w) or 'idle'
     table.insert(m.workers, w)
-    saveWorkers({ w })
+    w.id = MySQL.insert.await('INSERT INTO rsg_mining_workers (mine, name, skill, food, water, pickaxe, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        { id, w.name, w.skill, w.food, w.water, w.pickaxe, w.status })
+    saveMine(id) -- stores may have handed over a pickaxe
     notify(src, locale('hired', c.name), 'success')
     Webhook.Log('worker_hired', { src = src, mine = cfg.label, value = c.cost, fields = {
         { name = locale('wh_worker'), value = c.name, inline = true },
@@ -329,6 +340,7 @@ lib.callback.register('rsg-mining:server:fire', function(src, id, wid)
     local ok = guard(src, id)
     if ok ~= true then return ok end
     wid = tonumber(wid)
+    if not wid then return buildData(src, id) end
     local m = Mines[id]
     for i, w in ipairs(m.workers) do
         if w.id == wid then
@@ -405,8 +417,9 @@ lib.callback.register('rsg-mining:server:deposit', function(src, id, key, amount
     if not s or amount < 1 then notify(src, locale('invalid'), 'error') return buildData(src, id) end
     local Player = RSGCore.Functions.GetPlayer(src)
     if itemCount(src, Player, s.item) < amount then notify(src, locale('not_enough_items'), 'error') return buildData(src, id) end
-    if Player.Functions.RemoveItem(s.item, amount, nil, 'mining-supplies') then
-        TriggerClientEvent('rsg-inventory:client:ItemBox', src, RSGCore.Shared.Items[s.item], 'remove', amount)
+    if exports['rsg-inventory']:RemoveItem(src, s.item, amount, nil, 'mining-supplies') then
+        local shared = RSGCore.Shared.Items[s.item]
+        if shared then TriggerClientEvent('rsg-inventory:client:ItemBox', src, shared, 'remove', amount) end
         local m = Mines[id]
         m.supplies[key] = (m.supplies[key] or 0) + amount
         -- stalled workers grab what they need straight away and wait for the next shift
@@ -421,7 +434,7 @@ lib.callback.register('rsg-mining:server:deposit', function(src, id, key, amount
         notify(src, locale('deposited', amount, s.label), 'success')
         Webhook.Log('supplies_added', { src = src, mine = MineCfg[id].label, value = amount, fields = {
             { name = locale('wh_item'), value = ('%dx %s'):format(amount, s.label), inline = true },
-            { name = locale('wh_in_stores'), value = Mines[id].supplies[key], inline = true },
+            { name = locale('wh_in_stores'), value = m.supplies[key], inline = true },
         } })
     end
     return buildData(src, id)
@@ -440,43 +453,45 @@ local function maxCarry(src, item, want)
 end
 
 -- returns amount collected; partial = true when some was left behind for lack of space
-local function collectItem(src, Player, m, item)
+local function collectItem(src, m, item)
     local stored = m.storage[item] or 0
     local shared = RSGCore.Shared.Items[item]
     if stored < 1 or not shared then return 0, false end
     local amt = maxCarry(src, item, stored)
     if amt < 1 then return 0, true end
-    if not Player.Functions.AddItem(item, amt, nil, nil, 'mining-collect') then return 0, true end
+    if not exports['rsg-inventory']:AddItem(src, item, amt, nil, nil, 'mining-collect') then return 0, true end
     local left = stored - amt
     m.storage[item] = left > 0 and left or nil
     TriggerClientEvent('rsg-inventory:client:ItemBox', src, shared, 'add', amt)
-    notify(src, locale('collected', amt, shared.label), 'success')
     return amt, left > 0, shared.label
 end
 
 lib.callback.register('rsg-mining:server:collect', function(src, id, item)
     local ok = guard(src, id)
     if ok ~= true then return ok end
-    local Player = RSGCore.Functions.GetPlayer(src)
     local m = Mines[id]
     if type(item) ~= 'string' then return buildData(src, id) end
     local items = {}
     if item == '__all' then for k in pairs(m.storage) do items[#items + 1] = k end else items[1] = item end
-    local got, full, lines = 0, false, {}
+    local got, full, lines, msgs = 0, false, {}, {}
     for _, it in ipairs(items) do
-        local r, partial, label = collectItem(src, Player, m, it)
+        local r, partial, label = collectItem(src, m, it)
         got = got + r
         if partial then full = true end
-        if r > 0 then lines[#lines + 1] = ('%dx %s'):format(r, label) end
+        if r > 0 then
+            lines[#lines + 1] = ('%dx %s'):format(r, label)
+            msgs[#msgs + 1] = locale('collected', r, label)
+        end
     end
     if got > 0 then
+        notify(src, table.concat(msgs, '\n'), 'success') -- one toast instead of one per item
+        saveMine(id)
         Webhook.Log('ore_collected', { src = src, mine = MineCfg[id].label, value = got,
             description = table.concat(lines, '\n'),
             fields = { { name = locale('wh_total'), value = got, inline = true } } })
     end
     if full then notify(src, locale('inv_full'), 'error') end
     if got == 0 and not full then notify(src, locale('nothing_collect'), 'error') end
-    saveMine(id)
     return buildData(src, id)
 end)
 
@@ -564,10 +579,13 @@ CreateThread(function()
         Wait(60000)
         local now = os.time()
         for id, m in pairs(Mines) do
-            if m.citizenid and m.expires > 0 and m.expires <= now and #m.workers > 0 then
+            if m.citizenid and m.expires > 0 and m.expires <= now and (#m.workers > 0 or not m.expiredNotified) then
                 local crew = #m.workers
-                m.workers = {}
-                MySQL.prepare('DELETE FROM rsg_mining_workers WHERE mine = ?', { id })
+                m.expiredNotified = true
+                if crew > 0 then
+                    m.workers = {}
+                    MySQL.prepare('DELETE FROM rsg_mining_workers WHERE mine = ?', { id })
+                end
                 Webhook.Log('lease_expired', { citizenid = m.citizenid, mine = MineCfg[id].label, fields = {
                     { name = locale('wh_workers_released'), value = crew, inline = true },
                     { name = locale('wh_payroll_left'), value = '$' .. m.wages, inline = true },

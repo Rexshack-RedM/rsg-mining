@@ -17,6 +17,7 @@ box-shadow:0 20px 60px var(--rdr-shadow),inset 0 0 40px rgba(0,0,0,.5);padding:1
 .subtitle{font-size:11px;text-transform:uppercase;letter-spacing:3px;color:var(--rdr-muted);margin-top:3px}
 .circle-btn{width:32px;height:32px;border-radius:50%;border:1px solid var(--rdr-gold-dim);background:radial-gradient(circle,#2a2a2a,#0a0a0a);color:var(--rdr-text);cursor:pointer;font-size:14px;transition:.15s ease}
 .circle-btn:hover{border-color:var(--rdr-gold);filter:brightness(1.3)}
+.circle-btn:disabled{opacity:.45;cursor:not-allowed;filter:none}
 .divider{display:flex;align-items:center;gap:10px;margin:12px 0;color:var(--rdr-muted);font-size:12px}
 .divider::before,.divider::after{content:'';flex:1;height:1px}
 .divider::before{background:linear-gradient(90deg,transparent,var(--rdr-gold-dim))}
@@ -56,7 +57,6 @@ input[type=number]:focus{border-color:var(--rdr-gold);box-shadow:0 0 0 2px rgba(
 .label{font-size:10px;text-transform:uppercase;letter-spacing:2px;color:var(--rdr-muted)}
 .empty{text-align:center;font-style:italic;color:var(--rdr-muted);padding:20px 0}
 .actions{display:flex;justify-content:center;gap:8px;margin-top:4px}
-.header .circle-btn{cursor:pointer}
 .panel.dragged{position:absolute;margin:0}
 .panel.dragging{opacity:.92;transition:none}
 

@@ -31,6 +31,16 @@ function fmtTime(sec) {
   return d > 0 ? t('ui_time_days', d, h, m) : t('ui_time_hours', h, m);
 }
 
+// live countdown: element holds the local timestamp it reaches zero, ticked once a second
+let receivedAt = Date.now();
+const countdown = sec => `<span data-until="${receivedAt + sec * 1000}">${fmtTime(sec)}</span>`;
+setInterval(() => {
+  if (!state || isHidden()) return;
+  document.querySelectorAll('[data-until]').forEach(el => {
+    el.textContent = fmtTime(Math.floor((Number(el.dataset.until) - Date.now()) / 1000));
+  });
+}, 1000);
+
 // status -> pill colour; text comes from status_<name> locale keys
 const STATUS = {
   working: 'good', idle: 'warn', hungry: 'bad', thirsty: 'bad', no_pickaxe: 'bad', storage_full: 'warn', strike: 'bad'
@@ -42,7 +52,7 @@ function renderOverview(d) {
   const strikers = d.workers.filter(w => w.status === 'strike').length;
   document.getElementById('tab-overview').innerHTML = `
     <div class="summary">
-      <div class="row"><span class="label">${t('ui_lease_remaining')}</span><span class="big">${fmtTime(left)}</span></div>
+      <div class="row"><span class="label">${t('ui_lease_remaining')}</span><span class="big">${countdown(left)}</span></div>
       <div class="row"><span class="label">${t('ui_crew')}</span><span class="big">${d.workers.length} / ${d.maxWorkers}</span><span class="desc">${t('ui_working', working)}</span></div>
       <div class="row"><span class="label">${t('ui_storage')}</span><span class="big">${d.storageUsed} / ${d.storageCap}</span></div>
       <div class="row"><span class="label">${t('ui_shift_length')}</span><span class="big">${t('ui_minutes', d.workInterval)}</span></div>
@@ -85,7 +95,7 @@ function renderCrew(d) {
 function renderHire(d) {
   const full = d.workers.length >= d.maxWorkers;
   const el = document.getElementById('tab-hire');
-  const head = `<div class="desc" style="text-align:center">${t('ui_new_faces', fmtTime(d.candidateRefresh))}${full ? ` &mdash; ${t('ui_crew_full')}` : ''}</div>`;
+  const head = `<div class="desc" style="text-align:center">${t('ui_new_faces', countdown(d.candidateRefresh))}${full ? ` &mdash; ${t('ui_crew_full')}` : ''}</div>`;
   if (!d.candidates.length) { el.innerHTML = head + `<div class="empty">${t('ui_no_candidates')}</div>`; return; }
   el.innerHTML = head + d.candidates.map(c => `
     <div class="row"><div class="badge-icon">&#x1F464;</div>
@@ -118,10 +128,16 @@ function renderStorage(d) {
 
 function render() {
   if (!state) return;
-  const keep = document.getElementById('amt-wages')?.value; // don't wipe a typed payroll amount on refresh
+  receivedAt = Date.now();
+  // don't wipe amounts the player has typed when the server reply re-renders
+  const keep = {};
+  document.querySelectorAll('.content input[id]').forEach(i => { keep[i.id] = i.value; });
   document.getElementById('mineLabel').textContent = state.label;
   renderOverview(state); renderCrew(state); renderHire(state); renderSupplies(state); renderStorage(state);
-  if (keep) document.getElementById('amt-wages').value = keep;
+  for (const [id, v] of Object.entries(keep)) {
+    const el = document.getElementById(id);
+    if (el && v !== '') el.value = el.max !== '' ? Math.min(Number(v), Number(el.max)) : v;
+  }
 }
 
 function setTab(t) {
@@ -130,11 +146,19 @@ function setTab(t) {
   document.querySelectorAll('.tab-page').forEach(p => p.classList.toggle('hidden', p.id !== `tab-${t}`));
 }
 
-function close() { document.getElementById('app').classList.add('hidden'); post('close'); }
+const app = document.getElementById('app');
+const isHidden = () => app.classList.contains('hidden');
+function close() { if (isHidden()) return; app.classList.add('hidden'); post('close'); }
 
 document.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
 document.getElementById('closeBtn').addEventListener('click', close);
-document.getElementById('refreshBtn').addEventListener('click', () => post('refresh'));
+const refreshBtn = document.getElementById('refreshBtn');
+refreshBtn.addEventListener('click', () => {
+  if (refreshBtn.disabled) return;
+  refreshBtn.disabled = true; // throttle: each refresh is a server round trip
+  setTimeout(() => { refreshBtn.disabled = false; }, 1500);
+  post('refresh');
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape') close(); });
 
 document.querySelector('.content').addEventListener('click', e => {
@@ -208,7 +232,11 @@ window.addEventListener('resize', () => { if (panel.classList.contains('dragged'
 
 window.addEventListener('message', e => {
   const m = e.data;
-  if (m.action === 'open') { if (m.locales) { LOC = m.locales; applyStaticLocales(); } state = m.data; render(); setTab('overview'); document.getElementById('app').classList.remove('hidden'); loadPos(); }
+  if (m.action === 'open') {
+    if (m.locales) { LOC = m.locales; applyStaticLocales(); }
+    state = m.data; render(); setTab('overview');
+    app.classList.remove('hidden'); loadPos();
+  }
   else if (m.action === 'update') { state = m.data; render(); setTab(tab); }
-  else if (m.action === 'close') { document.getElementById('app').classList.add('hidden'); }
+  else if (m.action === 'close') { app.classList.add('hidden'); }
 });

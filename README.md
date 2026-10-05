@@ -29,7 +29,8 @@ Lease a mine from its foreman, hire a crew of miners, keep them fed, watered, eq
 1. Drop `rsg-mining` into your resources folder.
 2. Add `ensure rsg-mining` to your server.cfg **after** the dependencies.
 3. Make sure the items in `Config.Supplies` and the ores in each mine exist in your rsg-core shared items.
-4. Start the server. The database tables `rsg_mining` and `rsg_mining_workers` are created automatically, and older installs are upgraded automatically too.
+4. Copy the images in `installation/images` into `rsg-inventory/html/images` and add the items from `installation/shared_items.lua` to your shared items if you don't already have them.
+5. Start the server. The database tables `rsg_mining` and `rsg_mining_workers` are created automatically, and older installs are upgraded automatically too (works on both MySQL and MariaDB). If you'd rather set the database up by hand, run `installation/rsg-mining.sql` first.
 
 ## How it plays
 
@@ -49,7 +50,9 @@ A worker stops working when any of these happens:
 | No pickaxe | Their pickaxe broke and the stores have none | Deposit pickaxes |
 | Storage full | Ore storage has hit its cap | Collect the ore |
 
-Workers are only paid for shifts they actually work. When a lease expires, the workers leave. If a different player leases the mine next, its stores, storage and payroll are reset.
+Workers are only paid for shifts they actually work. When a lease expires, the workers leave and the holder is told (if online). If the same player re-leases, their stores, storage and payroll are kept. If a different player leases the mine next, its stores, storage and **payroll** are reset, so withdraw unused wages before your lease runs out.
+
+The ledger closes on its own if you walk more than `ManageDistance` from the foreman, and the lease and hiring-board timers count down live while it's open.
 
 ## Configuration (`shared/config.lua`)
 
@@ -112,6 +115,19 @@ How the keys are grouped:
 - **`wh_`:** Discord webhook titles and field names
 
 `%s` placeholders are filled in order. To add a language, copy `en.json`, translate the values and keep every `%s`.
+
+## Changelog
+
+### 3.0.0 (audit pass)
+
+- Fixed: the `wages` column upgrade used MariaDB-only syntax and stopped the script loading on MySQL.
+- Fixed: rapid hire requests could push a crew past `maxWorkers` while the database insert was pending.
+- Fixed: Discord posts retried after a 429 could get stuck in the queue until the next event.
+- Fixed: lease-expiry notice and log never fired when the mine had no workers.
+- Fixed: the foreman ped could spawn after you had already left the area (and leak), or hang forever if the model failed.
+- Changed: deposits and collections use the `rsg-inventory` exports directly.
+- Changed: "Collect all" sends one combined notification instead of one per item.
+- UX: the ledger can't be opened twice, auto-closes when you walk away, keeps typed amounts on refresh, has live countdowns, a throttled refresh button, and Escape only acts when it's open.
 
 ## License
 

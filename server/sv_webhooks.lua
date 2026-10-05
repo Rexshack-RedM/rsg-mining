@@ -5,7 +5,7 @@ lib.locale()
 Webhook = {}
 
 local queues = {}   -- [url] = { list = {}, running = bool }
-
+local pump
 
 local function isValidUrl(url)
     return type(url) == 'string' and url:find('^https://[%w%.]*discord%.com/api/webhooks/') ~= nil
@@ -51,13 +51,13 @@ local function post(url, entry)
             -- rate limited: retry it on the next send
             entry.tries = entry.tries + 1
             table.insert(queues[url].list, 1, entry)
+            pump(url) -- the send loop may already have finished
         elseif status < 200 or status >= 300 then
             print(('[rsg-mining] ^1webhook failed (%s)^7'):format(status))
         end
     end, 'POST', json.encode(entry.payload), { ['Content-Type'] = 'application/json' })
 end
 
-local pump
 pump = function(url)
     local q = queues[url]
     if q.running then return end
@@ -68,7 +68,6 @@ pump = function(url)
             Wait(WebhookConfig.SendInterval)
         end
         q.running = false
-        if #q.list > 0 then pump(url) end -- a late 429 requeued something
     end)
 end
 

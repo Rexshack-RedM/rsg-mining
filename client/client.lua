@@ -1,7 +1,10 @@
 lib.locale()
 
-local peds, blips = {}, {}
+local peds, blips, nearby = {}, {}, {}
 local currentMine = nil
+local opening = false
+local MineCfg = {}
+for _, m in ipairs(Config.Mines) do MineCfg[m.id] = m end
 
 local function notify(desc, ntype)
     lib.notify({ title = locale('mining'), description = desc, type = ntype or 'inform', position = Config.NotifyPosition, duration = 5000, icon = 'gem' })
@@ -22,13 +25,28 @@ local function getUiLocales()
     return uiLocales
 end
 
+local closeUI
+
+-- close the ledger once the player walks out of range (the server would refuse actions anyway)
+local function watchDistance(id)
+    CreateThread(function()
+        local c = MineCfg[id].foreman
+        local pos = vec3(c.x, c.y, c.z)
+        while currentMine == id do
+            if #(GetEntityCoords(cache.ped) - pos) > Config.ManageDistance then closeUI() break end
+            Wait(500)
+        end
+    end)
+end
+
 local function openUI(data)
     currentMine = data.id
     SetNuiFocus(true, true)
     SendNUIMessage({ action = 'open', data = data, locales = getUiLocales() })
+    watchDistance(data.id)
 end
 
-local function closeUI()
+closeUI = function()
     SetNuiFocus(false, false)
     SendNUIMessage({ action = 'close' })
     currentMine = nil
@@ -41,7 +59,7 @@ local function updateUI(data)
     SendNUIMessage({ action = 'update', data = data })
 end
 
-local function openForeman(mineId)
+local function fetchForeman(mineId)
     local res = lib.callback.await('rsg-mining:server:getMineData', false, mineId)
     if not res then return end
     if res.error then return notify(res.error, 'error') end
@@ -57,6 +75,15 @@ local function openForeman(mineId)
         if not res or not res.data then return end
     end
     openUI(res.data)
+end
+
+-- one ledger request at a time (stops double ox_target selects stacking dialogs)
+local function openForeman(mineId)
+    if opening or currentMine then return end
+    opening = true
+    local ok, err = pcall(fetchForeman, mineId)
+    opening = false
+    if not ok then print(('[rsg-mining] ^1%s^7'):format(err)) end
 end
 
 RegisterNUICallback('close', function(_, cb)
@@ -95,11 +122,16 @@ end)
 -- foreman peds
 ---------------------------------
 local function spawnForeman(mine)
+    if peds[mine.id] then return end
     local model = joaat(Config.ForemanModel)
-    lib.requestModel(model, 10000)
+    if not pcall(lib.requestModel, model, 10000) then return end
+    -- player may have left the area while the model streamed in
+    if not nearby[mine.id] or peds[mine.id] then SetModelAsNoLongerNeeded(model) return end
     local c = mine.foreman
     local ped = CreatePed(model, c.x, c.y, c.z - 1.0, c.w, false, false, false, false)
-    while not DoesEntityExist(ped) do Wait(10) end
+    local tries = 0
+    while not DoesEntityExist(ped) and tries < 100 do Wait(10) tries = tries + 1 end
+    if not DoesEntityExist(ped) then SetModelAsNoLongerNeeded(model) return end
     Citizen.InvokeNative(0x283978A15512B2FE, ped, true) -- SetRandomOutfitVariation
     SetEntityCanBeDamaged(ped, false)
     SetEntityInvincible(ped, true)
@@ -142,8 +174,8 @@ CreateThread(function()
         lib.points.new({
             coords = vec3(c.x, c.y, c.z),
             distance = Config.SpawnDistance,
-            onEnter = function() spawnForeman(mine) end,
-            onExit = function() removeForeman(mine.id) end,
+            onEnter = function() nearby[mine.id] = true spawnForeman(mine) end,
+            onExit = function() nearby[mine.id] = nil removeForeman(mine.id) end,
         })
     end
 end)
