@@ -117,6 +117,9 @@ How the keys are grouped:
 
 ## Changelog
 
+**3.1.0**
+- Optional rsg-skills integration: mining XP when collecting ore (`Config.Skills`).
+
 ### 3.0.0 (audit pass)
 
 - Fixed: the `wages` column upgrade used MariaDB-only syntax and stopped the script loading on MySQL.
@@ -127,6 +130,11 @@ How the keys are grouped:
 - Changed: deposits and collections use the `rsg-inventory` exports directly.
 - Changed: "Collect all" sends one combined notification instead of one per item.
 - UX: the ledger can't be opened twice, auto-closes when you walk away, keeps typed amounts on refresh, has live countdowns, a throttled refresh button, and Escape only acts when it's open.
+
+## rsg-skills integration
+
+Optional. With `rsg-skills` started, collecting ore from a mine awards mining XP (`Config.Skills.CollectXP` per item, capped by `MaxXPPerCollect`). Set `Config.Skills.Enabled = false` to turn it off.
+
 
 ## License
 

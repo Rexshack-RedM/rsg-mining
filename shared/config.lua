@@ -154,3 +154,11 @@ Config.Mines = {
         },
     },
 }
+
+-- rsg-skills integration (optional). Needs the rsg-skills resource; does nothing when it is not started.
+Config.Skills = {
+    Enabled = true,
+    Skill   = 'mining', -- skill key in rsg-skills
+    CollectXP = 1,       -- XP per ore item collected from a mine (rsg-skills applies its own multipliers and cap)
+    MaxXPPerCollect = 50, -- cap on the XP from one collect action
+}

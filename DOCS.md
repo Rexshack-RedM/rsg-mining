@@ -27,3 +27,8 @@ All re-validate lease holder, distance and cooldown server-side.
 
 ## Locale keys added in the migration
 `ui_confirm_buy`, `ui_cancel` (all 10 languages).
+
+## rsg-skills integration
+
+`Config.Skills = { Enabled, Skill, CollectXP, MaxXPPerCollect }`. After the server has handed over the ore in `rsg-mining:server:collect`, it calls `exports['rsg-skills']:AddXP(src, 'mining', xp, 'mining collect')` with `xp = min(items collected * CollectXP, MaxXPPerCollect)`. The amount comes from config. Skipped when rsg-skills is not started.
+
