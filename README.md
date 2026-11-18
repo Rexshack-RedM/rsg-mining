@@ -139,3 +139,7 @@ Optional. With `rsg-skills` started, collecting ore from a mine awards mining XP
 ## License
 
 See `LICENSE`.
+
+## Database
+
+Tables (`rsg_mining`, `rsg_mining_workers`) are created automatically on first start while `Config.AutoDatabase = true` (default); the database user needs `CREATE` permission. To install manually, set `Config.AutoDatabase = false` in the config and import `installation/rsg-mining.sql` once.

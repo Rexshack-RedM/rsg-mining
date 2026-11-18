@@ -168,24 +168,28 @@ end
 -- database
 ---------------------------------
 CreateThread(function()
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS rsg_mining (
-        mine VARCHAR(50) NOT NULL PRIMARY KEY,
-        citizenid VARCHAR(50) NULL,
-        expires INT NOT NULL DEFAULT 0,
-        wages INT NOT NULL DEFAULT 0,
-        supplies LONGTEXT NULL,
-        storage LONGTEXT NULL
-    )]])
-    MySQL.query.await([[CREATE TABLE IF NOT EXISTS rsg_mining_workers (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        mine VARCHAR(50) NOT NULL,
-        name VARCHAR(100) NOT NULL,
-        skill FLOAT NOT NULL DEFAULT 1,
-        food INT NOT NULL DEFAULT 100,
-        water INT NOT NULL DEFAULT 100,
-        pickaxe INT NOT NULL DEFAULT 0,
-        status VARCHAR(50) NOT NULL DEFAULT 'idle'
-    )]])
+    if Config.AutoDatabase ~= false then
+        MySQL.query.await([[CREATE TABLE IF NOT EXISTS rsg_mining (
+            mine VARCHAR(50) NOT NULL PRIMARY KEY,
+            citizenid VARCHAR(50) NULL,
+            expires INT NOT NULL DEFAULT 0,
+            wages INT NOT NULL DEFAULT 0,
+            supplies LONGTEXT NULL,
+            storage LONGTEXT NULL
+        )]])
+    end
+    if Config.AutoDatabase ~= false then
+        MySQL.query.await([[CREATE TABLE IF NOT EXISTS rsg_mining_workers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            mine VARCHAR(50) NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            skill FLOAT NOT NULL DEFAULT 1,
+            food INT NOT NULL DEFAULT 100,
+            water INT NOT NULL DEFAULT 100,
+            pickaxe INT NOT NULL DEFAULT 0,
+            status VARCHAR(50) NOT NULL DEFAULT 'idle'
+        )]])
+    end
 
     -- upgrade older installs (information_schema check works on both MySQL and MariaDB)
     local hasWages = MySQL.scalar.await([[SELECT COUNT(*) FROM information_schema.COLUMNS
